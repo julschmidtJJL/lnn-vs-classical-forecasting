@@ -1,6 +1,6 @@
 # Liquid Neural Networks vs. Traditional Models
 
-Experiment code for my bachelor's thesis at Leuphana University Lüneburg (B.Sc. Business Informatics, 2026; thesis graded 1.1, oral defence 1.0):
+Experiment code for my bachelor's thesis at Leuphana University Lüneburg (B.Sc. Business Informatics, 2026; thesis graded 1.0):
 *Liquid Neural Networks vs. Traditional Models: A Comparative Study in Financial Time Series Forecasting.*
 
 **[Read the thesis (PDF, 89 pages)](https://github.com/julschmidtJJL/lnn-vs-classical-forecasting/releases/download/thesis-2026/Schmidt-2026-Liquid-Neural-Networks-vs-Traditional-Models.pdf)**
