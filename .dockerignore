@@ -1,0 +1,18 @@
+venv/
+.venv/
+.git/
+.idea/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+src/lightning_logs/
+src/results/
+*.xlsx
+.DS_Store
+**/.DS_Store
+
+# Secrets: never bake into the image. Pass at runtime with `docker run --env-file .env`.
+.env
+.env.local
+.env.*.local

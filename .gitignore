@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Generated outputs
+src/results/
+src/lightning_logs/
+lightning_logs/
+*.xlsx
+
+# IDE / editor (keep .idea since it's already tracked)
+.DS_Store
+
+# Test cache
+.pytest_cache/
+
+# Secrets — real values live here, never commit. Commit .env.example instead.
+.env
+.env.local
+.env.*.local
+
+# Box-side notifier creds (Gmail app password). Commit notify.env.example only.
+notify.env
+scripts/notify.env
+
+# Vendored upstream references (LTC + CfC repos) are tracked for reproducibility,
+# but their bundled datasets/binaries are not.
+vendor/**/data/
+vendor/**/*.npy
+vendor/**/*.mat
+
+# Stationarity methods-check output (regenerable; reflects a pending decision)
+results/stationarity/

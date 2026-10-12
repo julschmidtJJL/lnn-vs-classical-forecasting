@@ -1,0 +1,685 @@
+# ─── WALK-FORWARD EVALUATION ──────────────────────────────────────────────────────────────────────────────────────────
+walk_forward:
+  initial_window: 750       # first training window (trading days, ~3 years)
+  horizon: 21               # test horizon per fold (trading days, ~1 month)
+  output_dir: "results/walk_forward"
+
+
+# ─── PREPROCESSING CONDITIONS ─────────────────────────────────────────────────────────────────────────────────────────
+preprocessing:
+  warmup_discard: 20          # rows discarded from the start of BOTH conditions (rolling-window NaN warmup)
+  macro_lag: 1                # publication-delay shift applied to all FRED + index columns in both conditions
+  scaler:
+    transformed: "zscore"     # StandardScaler for Condition 1
+    raw: "minmax"             # MinMaxScaler for Condition 2
+
+
+# ─── EXPERIMENT SETUP ─────────────────────────────────────────────────────────────────────────────────────────────────
+experiment:
+  # Self-declared run identity. Asserted against the RUN_KIND env var at startup
+  # (assert_run_kind) so a wrong config arg / RUN_ID combo fails fast before any
+  # writes. config.yaml = run #2 (variant/sensitivity grid).
+  run_kind: run2
+
+  # List of (period, interval) tuples to loop over
+  scenarios:
+    # 10y span (was 5y) → more NON-OVERLAPPING walk-forward folds (eng-review C2:
+    # more folds via longer history, NOT a sub-horizon step which would correlate
+    # DM errors). ~10y @ 1d with initial_window=750 yields far more folds, which
+    # also lifts SPY's underpowered significance. Keep FRED start (data.external)
+    # widened to match.
+    - { name: "short",  period: "10y", interval: "1d" }
+    # - { name: "medium", period: "5y", interval: "1d" }
+    # - { name: "long",   period: "5y", interval: "1d" }
+
+  # Target column in your feature set
+  target: "log_return"
+
+  # Feed the past target (log_return) to neural models as an input feature.
+  # false → run #0 behaviour: log_return dropped from neural X (handicapped baseline).
+  # true  → run #1 behaviour: neural models receive their own past returns. Legit
+  #         autoregression under the windowed 1-step-ahead eval (X[i:i+seq_len] ends
+  #         at t-1 when predicting y_t), NOT look-ahead leakage. Read in two places
+  #         (orchestrator X build + each model.fit) via models.feature_policy.
+  # Run #2 inherits run #1: neural models receive their own past returns.
+  include_past_target_as_feature: true
+
+  # Train/test split
+  test_size: 0.2        # fraction of data for test
+  shuffle: false        # time‑series split must not shuffle
+
+  # Random seed for neural model initialization — fix for reproducibility; document as limitation in thesis
+  seed: 42
+  # Multi-seed robustness: the full grid is run once per seed as a sub-run
+  # (run_id = "{run_group_id}#s{seed}"). Point metrics are reported mean±std
+  # across seeds; DM significance is reported per seed (k-of-N significant).
+  # Seed 1 builds + uploads the input snapshot; later seeds load it (identical
+  # inputs). Set to a single value (e.g. [42]) for a quick single-seed run.
+  seeds: [42]
+
+  # ── RUN #2: architecture/wiring variants + auto-order SARIMAX ────────────────
+  # Sensitivity/ablation layer. SELF-CONTAINED: all baselines run IN-RUN so every
+  # DM comparison is computed on identical folds within this run group, with no
+  # dependency on cross-run snapshot merges. Classical baselines (naive, AR(1)
+  # sarimax) AND the LSTM/CTRNN/NeuralODE neural baselines all run here.
+  # (Previously these neural baselines were to be reused from run #1 via
+  # analysis.merge_dm, but run #1's per-seed prediction snapshots collided in
+  # Supabase Storage — the '#s{seed}' run_id truncated the object key — so only
+  # seed 46 survived. We recompute them here instead; merge_dm is no longer on
+  # the critical path. See _safe_object_token in main.py for the key fix.)
+  # The #0/#1 run-lists live in git history (commits up to e5890d9).
+  #
+  # Launch env: INPUT_GROUP_ID=grid-2026-06-11 (pin run #0's frozen inputs, same
+  # as run #1) + a NEW RUN_ID for the run #2 results group.
+  #
+  # Variant ids encode {mode}_{wiring}: ncp = AutoNCP sparse wiring; fc = fully-
+  # connected + MLP backbone (CfC) / FullyConnected wiring (LTC).
+  runs:
+    # Exog-robustness cell (audit follow-up): the two headline models + naive.
+    - { model: "naive",   condition: "transformed" }
+    - { model: "sarimax", condition: "transformed" }                                          # fixed-order AR(1)
+    - { model: "cfc", variant: "pure_ncp", condition: "transformed", params: { mode: "pure", wiring: "ncp" } }
+
+
+
+# ─── DATA SOURCES ─────────────────────────────────────────────────────────────────────────────────────────────────────
+data:
+  # Per-ticker feature exclusions to prevent target leakage. Names are matched
+  # via FeatureBuilder.sanitize (e.g. "^GSPC" -> "gspc"). Applied before merging
+  # index features into the final frame.
+  feature_exclusions:
+    SPY: ["^GSPC"]
+
+  internal:
+    tickers:
+      - AAPL
+      # - MSFT
+      # - GOOG
+
+    # Period and interval may be overwritten
+    default_period: "10y"
+    default_interval: "1d"
+
+    # Secrets moved to .env (see .env.example). The alpha_vantage / fmp / finnhub
+    # keys were unused by the active pipeline and have been removed. If you re-enable
+    # one of those wrappers, read its key via os.environ there.
+    sec_user_agent: "BachelorThesisExperiment/1.0 (julius.m.schmidt@stud.leuphana.de)"  # not secret; SEC_USER_AGENT in .env overrides
+
+
+  external:
+    fred:
+      api_key: ""   # loaded from FRED_API_KEY in .env (this is only a fallback)
+
+      series: []   # EXOG-ROBUSTNESS ARM: FRED macro removed (audit A1/A2)
+
+      # default lookback — widened to 10y to match the 10y scenario period so
+      # FRED macro coverage spans the longer walk-forward history (eng-review C2).
+      start: "2015-11-07"
+      end: "2025-11-07"
+
+
+    indices:
+      - "^GSPC"       # S&P500 Index
+      - "^NDX"        # Nasdaq Index
+      - "^DJI"        # Dow Jones Index
+      - "^GDAXI"      # DAX Index
+      - "^STOXX50E"   # EuroStoxx 50 Index
+      # - "^SPAS50KP" # S&P50 Asia Index / ONLY ONE DATA POINT SOMEHOW...
+      - "GLD"         # Gold ETF
+      - "URTH"        # iShares MSCI World ETF
+      - "ACWI"        # iShares MSCI ACWI ETF
+
+
+
+# ─── FEATURE METADATA AND PARAMETERS ──────────────────────────────────────────────────────────────────────────────────
+features:
+  internal:
+    price:
+      open:
+        unit: "USD"
+        transform: "none"
+        description: "Opening share price for the trading day."
+
+      high:
+        unit: "USD"
+        transform: "none"
+        description: "Highest share price during the trading day."
+
+      low:
+        unit: "USD"
+        transform: "none"
+        description: "Lowest share price during the trading day."
+
+      close:
+        unit: "USD"
+        transform: "none"
+        description: "Closing share price at end of trading day."
+
+      log_return:
+        unit: "log-return"
+        transform: "none"
+        description: "Continuously compounded return between today’s and yesterday’s close."
+
+      volume:
+        unit: "shares"
+        transform: "none"
+        description: "Number of shares traded during the chosen timeframe."
+
+      dividends:
+        unit: "USD"
+        transform: "none"
+        description: "Cash dividend paid per share on that date."
+
+      stock_splits:
+        unit: "factor"
+        transform: "none"
+        description: "Stock split ratio applied on that date."
+
+
+    info:
+      sector:
+        unit: "string"
+        transform: "none"
+        description: "GICS sector classification of the company."
+
+      industry:
+        unit: "string"
+        transform: "none"
+        description: "GICS industry classification of the company."
+
+
+    # financial_statement: REMOVED — EXOG-ROBUSTNESS ARM (audit A1/A4)
+
+    technical_indicators:
+      simple_moving_average:
+        unit: "USD"
+        transform: "none"
+        description: "Simple moving average of closing price over a specified window."
+        params:
+          window: 20
+
+      exponential_moving_average:
+        unit: "USD"
+        transform: "none"
+        description: "Exponential moving average of closing price over a specified window."
+        params:
+          window: 20
+
+      moving_average_convergence_divergence:
+        unit: "USD"
+        transform: "none"
+        description: "Difference between fast and slow EMAs."
+        params:
+          fast_window: 12
+          slow_window: 26
+          signal_window: 9
+
+      relative_strength_index:
+        unit: "index"
+        transform: "none"
+        description: "Relative Strength Index over a specified period, scaled 0–100."
+        params:
+          window: 14
+
+      average_true_range:
+        unit: "USD"
+        transform: "none"
+        description: "Average True Range measuring volatility over a specified window."
+        params:
+          window: 14
+
+      on_balance_volume:
+        unit: "shares"
+        transform: "none"
+        description: "On-Balance Volume: cumulative flow of volume that adds/subtracts daily volume."
+        params: {}    # no rolling window
+
+      chaikin_money_flow:
+        unit: "ratio"
+        transform: "none"
+        description: "Chaikin Money Flow over a specified period."
+        params:
+          window: 20
+
+      upper_bollinger_band:
+        unit: "USD"
+        transform: "none"
+        description: "Upper Bollinger Band: SMA plus N standard deviations."
+        params:
+          window: 20
+          std_dev: 2
+
+      lower_bollinger_band:
+        unit: "USD"
+        transform: "none"
+        description: "Lower Bollinger Band: SMA minus N standard deviations."
+        params:
+          window: 20
+          std_dev: 2
+
+      stochastic_oscillator:
+        unit: "pct"
+        transform: "none"
+        description: "Stochastic %K: position of close relative to high/low over window."
+        params:
+          window: 14
+          smooth_window: 3
+
+      upper_keltner_channel:
+        unit: "USD"
+        transform: "none"
+        description: "Upper Keltner Channel: EMA plus ATR-based band."
+        params:
+          ema_window: 20
+          atr_window: 10
+          multiplier: 2
+
+      lower_keltner_channel:
+        unit: "USD"
+        transform: "none"
+        description: "Lower Keltner Channel: EMA minus ATR-based band."
+        params:
+          ema_window: 20
+          atr_window: 10
+          multiplier: 2
+
+      upper_donchian_channel:
+        unit: "USD"
+        transform: "none"
+        description: "Upper Donchian Channel: highest high over a window."
+        params:
+          window: 20
+
+      lower_donchian_channel:
+        unit: "USD"
+        transform: "none"
+        description: "Lower Donchian Channel: lowest low over a window."
+        params:
+          window: 20
+
+      rate_of_change:
+        unit: "pct"
+        transform: "none"
+        description: "Rate of Change: percent change over a window."
+        params:
+          window: 12
+
+      williams_r:
+        unit: "pct"
+        transform: "none"
+        description: "Williams %R: inverted stochastic, scaled -100 to 0."
+        params:
+          window: 14
+
+      average_directional_index:
+        unit: "index"
+        transform: "none"
+        description: "Average Directional Index measuring trend strength."
+        params:
+          window: 14
+
+
+  macro:
+    us_gross_domestic_product:
+      unit: "USD bn"
+      transform: "none"
+      description: "Nominal U.S. GDP (seasonally adjusted annual rate), in billions of USD."
+
+    us_consumer_price_index:
+      unit: "index"
+      transform: "none"
+      description: "U.S. Consumer Price Index (1982–84=100)."
+
+    us_core_cpi:
+      unit: "index"
+      transform: "none"
+      description: "U.S. Core CPI excluding food & energy (1982–84=100)."
+
+    us_personal_consumption_expenditures:
+      unit: "USD bn"
+      transform: "none"
+      description: "Personal Consumption Expenditures, in billions of USD."
+
+    us_core_pce:
+      unit: "USD bn"
+      transform: "none"
+      description: "Core PCE (excluding food & energy), in billions of USD."
+
+    us_unemployment_rate:
+      unit: "pct"
+      transform: "none"
+      description: "Civilian unemployment rate, in percent."
+
+    us_nonfarm_payrolls:
+      unit: "thousands"
+      transform: "none"
+      description: "Total nonfarm payroll employment, in thousands of jobs."
+
+    us_labor_force_participation:
+      unit: "pct"
+      transform: "none"
+      description: "Labor force participation rate, in percent."
+
+    us_average_hourly_earnings:
+      unit: "USD"
+      transform: "none"
+      description: "Average hourly earnings of all employees, in USD."
+
+    us_weekly_initial_jobless_claims:
+      unit: "claims"
+      transform: "none"
+      description: "Initial weekly unemployment claims, number of claims."
+
+    us_federal_funds_rate:
+      unit: "pct"
+      transform: "none"
+      description: "Effective federal funds rate, in percent."
+
+    us_treasury_yields_1y:
+      unit: "pct"
+      transform: "none"
+      description: "1-year Treasury constant maturity rate, in percent."
+
+    us_treasury_yields_2y:
+      unit: "pct"
+      transform: "none"
+      description: "2-year Treasury constant maturity rate, in percent."
+
+    us_treasury_yields_5y:
+      unit: "pct"
+      transform: "none"
+      description: "5-year Treasury constant maturity rate, in percent."
+
+    us_treasury_yields_10y:
+      unit: "pct"
+      transform: "none"
+      description: "10-year Treasury constant maturity rate, in percent."
+
+    us_treasury_yields_30y:
+      unit: "pct"
+      transform: "none"
+      description: "30-year Treasury constant maturity rate, in percent."
+
+    us_corporate_bonds_spread:
+      unit: "pct"
+      transform: "none"
+      description: "Moody’s BAA corporate bond yield minus 10-year Treasury yield, in percent."
+
+    us_10y_2y_treasury_spread:
+      unit: "pct"
+      transform: "none"
+      description: "10-year minus 2-year Treasury yield spread, in percent."
+
+    us_industrial_production_index:
+      unit: "index"
+      transform: "none"
+      description: "Industrial Production Index (2012=100)."
+
+    us_capacity_utilization_total:
+      unit: "pct"
+      transform: "none"
+      description: "Total Capacity Utilization rate, in percent of capacity."
+
+    us_real_manufacturing_and_trade_sales_inflation_adjusted:
+      unit: "USD bn"
+      transform: "none"
+      description: "Real manufacturing & trade sales (chained 2012 Dollars), in billions USD."
+
+    us_producer_price_index:
+      unit: "index"
+      transform: "none"
+      description: "Producer Price Index for All Commodities (1982=100)."
+
+    us_broad_retail_sales:
+      unit: "USD bn"
+      transform: "none"
+      description: "Retail and food services sales, in billions of USD."
+
+    us_corporate_profits_after_tax:
+      unit: "USD bn"
+      transform: "none"
+      description: "Corporate profits after tax with IVA and CCAdj, in billions USD."
+
+    us_consumer_sentiment:
+      unit: "index"
+      transform: "none"
+      description: "University of Michigan Consumer Sentiment Index (1966 Q1=100)."
+
+    us_personal_savings_rate:
+      unit: "pct"
+      transform: "none"
+      description: "Personal saving as percent of disposable personal income."
+
+    us_housing_starts:
+      unit: "thousands"
+      transform: "none"
+      description: "Housing starts: number of units, in thousands."
+
+    us_building_permits:
+      unit: "thousands"
+      transform: "none"
+      description: "Building permits: number of units, in thousands."
+
+    us_existing_home_sales:
+      unit: "millions"
+      transform: "none"
+      description: "Existing home sales: seasonally adjusted, in millions of units."
+
+    us_case_shiller_home_price_index:
+      unit: "index"
+      transform: "none"
+      description: "Case–Shiller 20-city home price index (1980=100)."
+
+    us_m2_money_stock:
+      unit: "USD bn"
+      transform: "none"
+      description: "M2 money stock, in billions of USD."
+
+    us_total_commercial_banks_credit:
+      unit: "USD bn"
+      transform: "none"
+      description: "Total credit at commercial banks, in billions of USD."
+
+    us_credit_card_delinquencies:
+      unit: "pct"
+      transform: "none"
+      description: "Credit card delinquency rate, percent of outstanding balances."
+
+    us_chicago_fed_nfci:
+      unit: "index"
+      transform: "none"
+      description: "Chicago Fed National Financial Conditions Index (zero = average conditions)."
+
+    us_trade_balance:
+      unit: "USD bn"
+      transform: "none"
+      description: "Trade balance (exports minus imports), in billions USD."
+
+    us_imports:
+      unit: "USD bn"
+      transform: "none"
+      description: "Imports of goods and services, in billions USD."
+
+    us_exports:
+      unit: "USD bn"
+      transform: "none"
+      description: "Exports of goods and services, in billions USD."
+
+    us_crude_oil_wti:
+      unit: "USD/barrel"
+      transform: "none"
+      description: "West Texas Intermediate crude oil spot price, in USD per barrel."
+
+    us_gold_volatility_cboe_gvz:
+      unit: "index"
+      transform: "none"
+      description: "CBOE Gold Volatility Index (GVZ), index level."
+
+  index:
+    ^gspc:
+      unit: "index"
+      transform: "none"
+      description: "S&P 500® Index of 500 large-cap U.S. companies, market-cap weighted."
+
+    ^ndx:
+      unit: "index"
+      transform: "none"
+      description: "NASDAQ-100® Index of the largest 100 non-financial U.S. and intern. companies listed on Nasdaq."
+
+    ^dji:
+      unit: "index"
+      transform: "none"
+      description: "Dow Jones Industrial Average of 30 major U.S. blue-chip stocks, price-weighted."
+
+    ^gdaxi:
+      unit: "index"
+      transform: "none"
+      description: "DAX® Index of 40 large German companies trading on the Frankfurt Stock Exchange."
+
+    ^stoxx50e:
+      unit: "index"
+      transform: "none"
+      description: "EURO STOXX 50® Index of 50 large, liquid eurozone stocks."
+
+    urth:
+      unit: "etf"
+      transform: "none"
+      description: "iShares MSCI World ETF tracking performance of large- and mid-cap stocks across developed markets."
+
+    acwi:
+      unit: "etf"
+      transform: "none"
+      description: "iShares MSCI ACWI ETF tracking performance of large- and mid-cap stocks across all markets."
+
+    gld:
+      unit: "USD"
+      transform: "none"
+      description: "SPDR Gold Shares ETF, designed to track the price of gold bullion per share in USD."
+
+
+
+# ─── MODEL HYPERPARAMETERS ────────────────────────────────────────────────────────────────────────────────────────────
+models:
+  SARIMAX:
+    order: [1, 0, 0]
+    seasonal_order: [0, 0, 0, 0]
+    ranges:
+      p: [0, 2]
+      d: [0, 1]
+      q: [0, 2]
+      P: [0, 2]
+      D: [0, 1]
+      Q: [0, 2]
+      s: [5]
+      max_combos: 4
+    enforce_stationarity: False
+    enforce_invertibility: False
+    forecast_steps: 10
+  # Auto-order SARIMAX (run #2): per-fold AIC search over p,q ∈ {0..p_max},
+  # d fixed (target already stationary), seasonal_order=(0,0,0,0), no trend.
+  # Reuses SARIMAX.enforce_* above. 9 candidates/fold at the defaults below.
+  SARIMAX_AIC:
+    p_max: 2
+    q_max: 2
+    d: 0
+  VARMAX:
+    order: [1, 0]
+    endog_cols:
+      - log_return
+      - dji
+      - gld
+      - us_consumer_price_index
+      - income_q_gross_profit_pctchg
+    target_col: log_return
+    ranges:
+      p: [0, 2]
+      q: [0, 2]
+      max_combos: 4
+    enforce_stationarity: False
+    enforce_invertibility: False
+    forecast_steps: 10
+  LSTM:
+    hidden_size: 64
+    num_layers: 2
+    dropout: 0.1
+    lr: 0.001
+    batch_size: 32
+    epochs: 50          # was 10 — uniform 50 across all neural models (eng-review C1)
+    seq_len: 20
+    forecast_steps: 10
+    ranges:
+      hidden_size: [32, 64]
+      num_layers: [1, 2]
+      dropout: [0.0, 0.1]
+      lr: [0.001, 0.0005]
+      batch_size: [32, 64]
+      seq_len: [20, 200]
+      epochs: [10, 100]
+      max_combos: 4
+  LTC:
+    units: 16
+    lr: 0.005
+    epochs: 50          # was 1 — uniform 50 across all neural models (eng-review C1)
+    seq_len: 20
+    clip_gradient: 1.0
+    batch_size: 32
+    sparsity_level: 0.5
+    batch_first: True
+    forecast_steps: 10
+    ranges:
+      units: [16, 128]
+      lr: [0.01, 0.005]
+      epochs: [1, 100]
+      seq_len: [20, 200]
+      sparsity_level: [0.1, 0.9]
+      batch_size: [32, 64]
+      clip_gradient: [1.0, 1.0]
+      max_combos: 4
+  CfC:
+    units: 16
+    lr: 0.005
+    epochs: 50          # was 1 — uniform 50 across all neural models (eng-review C1)
+    seq_len: 20
+    clip_gradient: 1.0
+    batch_size: 32
+    sparsity_level: 0.5
+    batch_first: True
+    forecast_steps: 10
+    ranges:
+      units: [16, 128]
+      lr: [0.01, 0.005]
+      epochs: [1, 100]
+      seq_len: [20, 200]
+      sparsity_level: [0.1, 0.9]
+      batch_size: [32, 64]
+      clip_gradient: [1.0, 1.0]
+      max_combos: 4
+
+  # Continuous-time RNN (Funahashi & Nakamura, 1993). Walk-forward uses defaults.
+  CTRNN:
+    hidden_size: 32
+    dt: 1.0
+    lr: 0.005
+    batch_size: 32
+    seq_len: 20
+    epochs: 50
+    grad_clip: 1.0
+    forecast_steps: 10
+
+  # Neural ODE (Chen et al., 2018) with GRU encoder + latent ODE residual.
+  # Default solver rk4 (4 RHS evals/step via options={"step_size": 0.25}).
+  # dopri5 is smoke-validated only (see thesis methods), not in the full grid.
+  NeuralODE:
+    latent_size: 16
+    encoder_hidden: 32
+    ode_hidden: 32
+    solver: "rk4"
+    step_size: 0.25
+    rtol: 1.0e-3
+    atol: 1.0e-4
+    lr: 0.005
+    batch_size: 32
+    seq_len: 20
+    epochs: 50
+    grad_clip: 1.0
+    forecast_steps: 10

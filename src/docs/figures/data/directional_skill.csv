@@ -1,0 +1,4 @@
+ticker,n_per_seed,cfc_da,always_long_base_rate,p_up,edge_vs_coinflip,p_binom_vs_0.5,edge_vs_always_long,downcalls_total_5seeds,downcall_win_rate,p_paired_sign_test
+AAPL,1735,0.534294,0.535447,0.535447,0.034294,0.002299,-0.001153,80,0.437500,0.890741
+SPY,1737,0.551410,0.553253,0.553253,0.051410,0.000010,-0.001842,80,0.400000,0.971668
+JPM,1736,0.531912,0.532258,0.532258,0.031912,0.004438,-0.000346,25,0.440000,0.787822

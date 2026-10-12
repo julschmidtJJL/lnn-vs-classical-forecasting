@@ -1,0 +1,36 @@
+# Bachelor thesis experiment — Python dependencies.
+# Versions pinned to what the project was last validated against.
+# Generated 2026-05-27 as part of the CT-RNN / Neural ODE integration (T2).
+
+# Config / secrets
+python-dotenv==1.2.2   # load secrets from .env (main.py)
+
+# Data sources
+yfinance==0.2.63       # internal price data (data_import/internal_yahoo)
+fredapi==0.5.2         # FRED macro series (data_import/external)
+requests==2.32.4       # SEC EDGAR + ticker-map HTTP (data_import/internal_sec)
+
+# Core scientific stack
+numpy==1.26.4
+pandas==2.3.0
+scipy==1.16.1
+scikit-learn==1.7.1
+statsmodels==0.14.5
+matplotlib==3.10.5
+seaborn==0.13.2
+PyYAML==6.0.2
+
+# Deep learning
+torch==2.2.2
+pytorch-lightning==2.5.5
+torchmetrics==1.8.2
+
+# Continuous-time RNN ecosystem
+ncps==1.0.1            # liquid time-constant + CfC models (Hasani et al.)
+torchdiffeq==0.2.5     # neural ODE solver (Chen et al., 2018) — added by T2
+
+# Backend logger
+supabase==2.18.1
+
+# Provenance: parquet input/predictions snapshots + canonical fingerprints
+pyarrow==24.0.0        # parquet engine for run-input + predictions snapshots
