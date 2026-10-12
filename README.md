@@ -3,6 +3,8 @@
 Experiment code for my bachelor's thesis at Leuphana University Lüneburg (B.Sc. Business Informatics, 2026, graded 1.1):
 *Liquid Neural Networks vs. Traditional Models: A Comparative Study in Financial Time Series Forecasting.*
 
+**[Read the thesis (PDF, 89 pages)](https://github.com/julschmidtJJL/lnn-vs-classical-forecasting/releases/download/thesis-2026/Schmidt-2026-Liquid-Neural-Networks-vs-Traditional-Models.pdf)**
+
 **Question.** Do liquid neural networks forecast daily financial returns better than classical models?
 
 **Answer.** No. Across 11 liquid variants and 8 baselines on three US assets, **0 of 120 corrected comparisons** show a liquid model significantly beating a traditional baseline.
