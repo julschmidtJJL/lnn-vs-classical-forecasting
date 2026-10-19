@@ -110,8 +110,9 @@ cd src && ../.venv/bin/python main.py config.smoke.yaml
 ```
 
 AAPL only, 3 walk-forward folds, one seed, shortened training; about 8
-minutes on a 2020 Intel MacBook. It downloads the data, builds both preprocessing conditions, fits every model family and
-runs the DM/Holm tests. The summary lands in
+minutes on a 2020 Intel MacBook. It downloads the data, builds both
+preprocessing conditions, fits every model family and runs the DM/Holm
+tests. The summary lands in
 `src/results/walk_forward/AAPL_wf_summary.json`; show the user the metrics
 and the primary significance table, and remind them it is a smoke result.
 
